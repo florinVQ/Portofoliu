@@ -596,82 +596,6 @@
     gap: 12px
   }
 
-  /* ===== Cursor companion ===== */
-  #companion {
-    position: fixed;
-    left: 0;
-    top: 0;
-    z-index: 40;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity .3s
-  }
-
-  #companion.is-visible {
-    opacity: 1
-  }
-
-  #companion b {
-    display: block;
-    width: 34px;
-    height: 34px;
-    margin: -17px 0 0 -17px;
-    border: 1.5px solid var(--text);
-    border-radius: 50%;
-    transition: transform .3s cubic-bezier(.22, 1, .36, 1), background .3s
-  }
-
-  #companion i {
-    position: absolute;
-    left: -2px;
-    top: -2px;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--text)
-  }
-
-  #companion span {
-    position: absolute;
-    left: 26px;
-    top: -7px;
-    font: 400 11px/1 "Geist Mono", ui-monospace, monospace;
-    color: var(--muted);
-    white-space: nowrap
-  }
-
-  #companion.is-over-card b {
-    transform: scale(1.8)
-  }
-
-  #companion.is-over-link b {
-    transform: scale(.35);
-    background: var(--text)
-  }
-
-  .touch-device #companion {
-    transition: opacity .3s, transform 1s cubic-bezier(.34, 1.45, .64, 1)
-  }
-
-  .touch-device #companion b {
-    width: 10px;
-    height: 10px;
-    margin: -5px 0 0 -5px;
-    border: 0;
-    background: var(--text)
-  }
-
-  .touch-device #companion i,
-  .touch-device #companion span {
-    display: none
-  }
-
-  @media(prefers-reduced-motion:reduce) {
-    #companion {
-      display: none
-    }
-  }
-
   /* ===== Lusion-style extras: background, intro loader, marquee, sound button ===== */
   #background {
     position: fixed;
@@ -922,6 +846,17 @@
       padding: 72px 0
     }
   }
+
+  /* ===== Particle flow canvas (mouse trail, finger trail, tap bursts) ===== */
+  #flow {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 15;
+    pointer-events: none;
+    filter: blur(.7px) saturate(1.35)
+  }
     </style>
   </head>
   <body>
@@ -930,7 +865,8 @@
     <!-- Background canvas (spheres) -->
     <canvas id="background" aria-hidden="true"></canvas>
     <div id="progress"></div>
-    <div id="companion" aria-hidden="true"><b></b><i></i><span>salut</span></div>
+    <!-- Particle flow canvas -->
+    <canvas id="flow" aria-hidden="true"></canvas>
     <!-- Header -->
     <header>
       <div class="wrap">
@@ -1063,21 +999,9 @@
       const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
       const byId = (id) => document.getElementById(id);
 
-      const SECTION_IDS = ["despre", "proiect", "zi"];
-      const SECTION_LABELS = ["salut", "despre mine", "proiect", "o zi în plus"];
-
       function isDark() {
         const forced = root.getAttribute("data-theme");
         return forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-      }
-
-      // 0 = hero, 1..n = the section whose top has passed the middle of the screen
-      function currentSection() {
-        let index = 0;
-        SECTION_IDS.forEach((id, i) => {
-          if (byId(id).getBoundingClientRect().top < innerHeight * 0.5) index = i + 1;
-        });
-        return index;
       }
 
       /* ---------- Scroll progress bar ---------- */
@@ -1288,56 +1212,171 @@
         };
       }
 
-      /* ---------- Companion: follows the mouse, or hops along the side margins on touch ---------- */
-      function initCompanion() {
-        const companion = byId("companion");
-        const label = companion.querySelector("span");
-        if (reduceMotion) return;
+      /* ---------- Particle flow: finger trail and tap bursts (touch screens only, no mouse effect) ---------- */
+      function initParticleFlow() {
+        const canvas = byId("flow");
+        const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+        if (!hasTouch) { canvas.remove(); return; } // desktop with mouse: no effect at all
 
-        const hasMouse = matchMedia("(hover: hover) and (pointer: fine)").matches;
-        if (hasMouse) {
-          let x = innerWidth / 2, y = innerHeight / 2;
-          let targetX = x, targetY = y;
-          let shownSection = -1;
+        const ctx = canvas.getContext("2d");
+        const MAX_PARTICLES = 1200;
+        const MAX_PIXEL_RATIO = 1.5; // keeps phones smooth
 
-          addEventListener("pointermove", (e) => {
-            targetX = e.clientX;
-            targetY = e.clientY;
-            companion.classList.add("is-visible");
-          });
-          root.addEventListener("mouseleave", () => companion.classList.remove("is-visible"));
-          document.addEventListener("pointerover", (e) => {
-            const overLink = e.target.closest("a, button");
-            const overCard = e.target.closest(".card, .photo");
-            companion.classList.toggle("is-over-link", !!overLink);
-            companion.classList.toggle("is-over-card", !overLink && !!overCard);
-          });
-          (function follow() {
-            x += (targetX - x) * 0.16;
-            y += (targetY - y) * 0.16;
-            companion.style.transform = "translate3d(" + x + "px," + y + "px,0)";
-            requestAnimationFrame(follow);
-          })();
-          addEventListener("scroll", () => {
-            const section = currentSection();
-            if (section === shownSection) return;
-            shownSection = section;
-            label.textContent = SECTION_LABELS[section];
-          }, { passive: true });
-        } else {
-          root.classList.add("touch-device");
-          companion.classList.add("is-visible");
-          const hop = () => {
-            const max = root.scrollHeight - innerHeight;
-            const progress = max > 0 ? scrollY / max : 0;
-            const x = currentSection() % 2 ? innerWidth - 11 : 11; // alternate left / right margin
-            const y = 26 + progress * (innerHeight - 90);
-            companion.style.transform = "translate3d(" + x + "px," + y + "px,0)";
-          };
-          addEventListener("scroll", hop, { passive: true });
-          addEventListener("resize", hop);
-          hop();
+        const particles = [];
+        const pointer = { x: 0, y: 0, active: false };
+        let width, height, pixelRatio;
+        let hue = 200;
+        let time = 0;
+        let lastTimestamp = 0;
+        let cleared = false;
+
+        function resize() {
+          pixelRatio = Math.min(devicePixelRatio || 1, MAX_PIXEL_RATIO);
+          width = innerWidth;
+          height = innerHeight;
+          canvas.width = width * pixelRatio;
+          canvas.height = height * pixelRatio;
+          ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
         }
+
+        // Smooth scalar field. Only its 90°-rotated gradient is used (see curl),
+        // which makes the flow divergence-free: real swirling eddies, not wavy drift.
+        function potential(x, y, t) {
+          return (
+            Math.sin(x * 0.006 + t) * Math.cos(y * 0.006 - t * 0.8) +
+            Math.sin((x + y) * 0.003 + t * 0.5) * 0.6 +
+            Math.cos(x * 0.004 - y * 0.005 + t * 0.3) * 0.4
+          );
+        }
+
+        function curl(x, y, t) {
+          const eps = 1;
+          const dY = (potential(x, y + eps, t) - potential(x, y - eps, t)) / (2 * eps);
+          const dX = (potential(x + eps, y, t) - potential(x - eps, y, t)) / (2 * eps);
+          return { vx: dY, vy: -dX };
+        }
+
+        function addParticle(x, y, vx, vy, hueSpread, life, dim) {
+          particles.push({
+            x, y, prevX: x, prevY: y, vx, vy,
+            hue: hue + (Math.random() - 0.5) * hueSpread,
+            radius: 1.4 + Math.random() * 2.2,
+            life: 0, maxLife: life, dim,
+          });
+        }
+
+        function spawn(x, y, dx, dy, dim = 1) {
+          if (particles.length > MAX_PARTICLES) return;
+          addParticle(x, y, dx * 0.08 + (Math.random() - 0.5) * 0.6, dy * 0.08 + (Math.random() - 0.5) * 0.6,
+            30, 70 + Math.random() * 70, dim);
+        }
+
+        function spawnTrail(x1, y1, x2, y2) {
+          const dx = x2 - x1, dy = y2 - y1;
+          const count = Math.min(6, Math.max(1, Math.floor(Math.hypot(dx, dy) / 4)));
+          for (let i = 0; i < count; i++) spawn(x1 + (dx * i) / count, y1 + (dy * i) / count, dx, dy);
+        }
+
+        function burst(x, y) {
+          for (let i = 0; i < 50; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 1.5 + Math.random() * 3.5;
+            addParticle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 50, 40 + Math.random() * 30, 1);
+          }
+        }
+
+        function moveTo(x, y) {
+          if (pointer.active) spawnTrail(pointer.x, pointer.y, x, y);
+          pointer.x = x;
+          pointer.y = y;
+          pointer.active = true;
+        }
+
+        function moveParticle(p) {
+          p.prevX = p.x;
+          p.prevY = p.y;
+          const flow = curl(p.x, p.y, time);
+          let targetX = flow.vx * 320;
+          let targetY = flow.vy * 320;
+          const magnitude = Math.hypot(targetX, targetY);
+          const MAX_SPEED = 2.2;
+          if (magnitude > MAX_SPEED) {
+            targetX = (targetX / magnitude) * MAX_SPEED;
+            targetY = (targetY / magnitude) * MAX_SPEED;
+          }
+          p.vx += (targetX - p.vx) * 0.05;
+          p.vy += (targetY - p.vy) * 0.05;
+          p.x += p.vx;
+          p.y += p.vy;
+          p.life++;
+        }
+
+        function isDead(p) {
+          return p.life / p.maxLife >= 1 || p.x < -50 || p.x > width + 50 || p.y < -50 || p.y > height + 50;
+        }
+
+        function step(timestamp) {
+          requestAnimationFrame(step);
+          const dt = lastTimestamp ? (timestamp - lastTimestamp) / 1000 : 0;
+          lastTimestamp = timestamp;
+          time += dt * 0.24;
+          hue = (hue + dt * 3.6) % 360;
+
+          if (!particles.length && !pointer.active) { // nothing to show: wipe leftovers once
+            if (!cleared) ctx.clearRect(0, 0, width, height);
+            cleared = true;
+            return;
+          }
+          cleared = false;
+
+          const dark = isDark();
+          // Fade old strokes towards transparent so the page underneath stays visible
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.fillStyle = "rgba(0,0,0,0.07)";
+          ctx.fillRect(0, 0, width, height);
+          ctx.globalCompositeOperation = dark ? "lighter" : "source-over";
+          ctx.lineCap = "round";
+
+          for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            moveParticle(p);
+            if (isDead(p)) { particles.splice(i, 1); continue; }
+            // A short stroke along the direction of travel turns dots into a ribbon
+            const alpha = Math.sin(Math.PI * (1 - p.life / p.maxLife)) * 0.85 * p.dim;
+            ctx.beginPath();
+            ctx.strokeStyle = "hsla(" + p.hue + ",90%," + (dark ? 60 : 50) + "%," + alpha + ")";
+            ctx.lineWidth = p.radius * 2;
+            ctx.moveTo(p.prevX, p.prevY);
+            ctx.lineTo(p.x, p.y);
+            ctx.stroke();
+          }
+
+          if (pointer.active) { // soft glow marking the finger
+            for (let i = 3; i >= 1; i--) {
+              ctx.beginPath();
+              ctx.fillStyle = "hsla(" + hue + ",90%," + (dark ? 72 : 55) + "%," + 0.1 * i + ")";
+              ctx.arc(pointer.x, pointer.y, 3.5 * i, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+
+        resize();
+        addEventListener("resize", resize);
+
+        // Touch events keep firing while the page scrolls (pointer events get cancelled)
+        addEventListener("touchstart", (e) => {
+          const t = e.touches[0];
+          pointer.active = false;
+          moveTo(t.clientX, t.clientY);
+          burst(t.clientX, t.clientY);
+        }, { passive: true });
+        addEventListener("touchmove", (e) => { moveTo(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+        const touchEnd = () => { pointer.active = false; };
+        addEventListener("touchend", touchEnd, { passive: true });
+        addEventListener("touchcancel", touchEnd, { passive: true });
+
+        requestAnimationFrame(step);
       }
 
       /* ---------- Theme toggle (remembered in localStorage) ---------- */
@@ -1374,7 +1413,7 @@
       initLoader();
       initBackground();
       initSound();
-      initCompanion();
+      initParticleFlow();
       initTheme();
       initReveal();
     })();
