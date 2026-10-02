@@ -846,17 +846,6 @@
       padding: 72px 0
     }
   }
-
-  /* ===== Particle flow canvas (mouse trail, finger trail, tap bursts) ===== */
-  #flow {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 15;
-    pointer-events: none;
-    filter: blur(.7px) saturate(1.35)
-  }
     </style>
   </head>
   <body>
@@ -865,8 +854,6 @@
     <!-- Background canvas (spheres) -->
     <canvas id="background" aria-hidden="true"></canvas>
     <div id="progress"></div>
-    <!-- Particle flow canvas -->
-    <canvas id="flow" aria-hidden="true"></canvas>
     <!-- Header -->
     <header>
       <div class="wrap">
@@ -1212,173 +1199,6 @@
         };
       }
 
-      /* ---------- Particle flow: finger trail and tap bursts (touch screens only, no mouse effect) ---------- */
-      function initParticleFlow() {
-        const canvas = byId("flow");
-        const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-        if (!hasTouch) { canvas.remove(); return; } // desktop with mouse: no effect at all
-
-        const ctx = canvas.getContext("2d");
-        const MAX_PARTICLES = 1200;
-        const MAX_PIXEL_RATIO = 1.5; // keeps phones smooth
-
-        const particles = [];
-        const pointer = { x: 0, y: 0, active: false };
-        let width, height, pixelRatio;
-        let hue = 200;
-        let time = 0;
-        let lastTimestamp = 0;
-        let cleared = false;
-
-        function resize() {
-          pixelRatio = Math.min(devicePixelRatio || 1, MAX_PIXEL_RATIO);
-          width = innerWidth;
-          height = innerHeight;
-          canvas.width = width * pixelRatio;
-          canvas.height = height * pixelRatio;
-          ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-        }
-
-        // Smooth scalar field. Only its 90°-rotated gradient is used (see curl),
-        // which makes the flow divergence-free: real swirling eddies, not wavy drift.
-        function potential(x, y, t) {
-          return (
-            Math.sin(x * 0.006 + t) * Math.cos(y * 0.006 - t * 0.8) +
-            Math.sin((x + y) * 0.003 + t * 0.5) * 0.6 +
-            Math.cos(x * 0.004 - y * 0.005 + t * 0.3) * 0.4
-          );
-        }
-
-        function curl(x, y, t) {
-          const eps = 1;
-          const dY = (potential(x, y + eps, t) - potential(x, y - eps, t)) / (2 * eps);
-          const dX = (potential(x + eps, y, t) - potential(x - eps, y, t)) / (2 * eps);
-          return { vx: dY, vy: -dX };
-        }
-
-        function addParticle(x, y, vx, vy, hueSpread, life, dim) {
-          particles.push({
-            x, y, prevX: x, prevY: y, vx, vy,
-            hue: hue + (Math.random() - 0.5) * hueSpread,
-            radius: 1.4 + Math.random() * 2.2,
-            life: 0, maxLife: life, dim,
-          });
-        }
-
-        function spawn(x, y, dx, dy, dim = 1) {
-          if (particles.length > MAX_PARTICLES) return;
-          addParticle(x, y, dx * 0.08 + (Math.random() - 0.5) * 0.6, dy * 0.08 + (Math.random() - 0.5) * 0.6,
-            30, 70 + Math.random() * 70, dim);
-        }
-
-        function spawnTrail(x1, y1, x2, y2) {
-          const dx = x2 - x1, dy = y2 - y1;
-          const count = Math.min(6, Math.max(1, Math.floor(Math.hypot(dx, dy) / 4)));
-          for (let i = 0; i < count; i++) spawn(x1 + (dx * i) / count, y1 + (dy * i) / count, dx, dy);
-        }
-
-        function burst(x, y) {
-          for (let i = 0; i < 50; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 1.5 + Math.random() * 3.5;
-            addParticle(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 50, 40 + Math.random() * 30, 1);
-          }
-        }
-
-        function moveTo(x, y) {
-          if (pointer.active) spawnTrail(pointer.x, pointer.y, x, y);
-          pointer.x = x;
-          pointer.y = y;
-          pointer.active = true;
-        }
-
-        function moveParticle(p) {
-          p.prevX = p.x;
-          p.prevY = p.y;
-          const flow = curl(p.x, p.y, time);
-          let targetX = flow.vx * 320;
-          let targetY = flow.vy * 320;
-          const magnitude = Math.hypot(targetX, targetY);
-          const MAX_SPEED = 2.2;
-          if (magnitude > MAX_SPEED) {
-            targetX = (targetX / magnitude) * MAX_SPEED;
-            targetY = (targetY / magnitude) * MAX_SPEED;
-          }
-          p.vx += (targetX - p.vx) * 0.05;
-          p.vy += (targetY - p.vy) * 0.05;
-          p.x += p.vx;
-          p.y += p.vy;
-          p.life++;
-        }
-
-        function isDead(p) {
-          return p.life / p.maxLife >= 1 || p.x < -50 || p.x > width + 50 || p.y < -50 || p.y > height + 50;
-        }
-
-        function step(timestamp) {
-          requestAnimationFrame(step);
-          const dt = lastTimestamp ? (timestamp - lastTimestamp) / 1000 : 0;
-          lastTimestamp = timestamp;
-          time += dt * 0.24;
-          hue = (hue + dt * 3.6) % 360;
-
-          if (!particles.length && !pointer.active) { // nothing to show: wipe leftovers once
-            if (!cleared) ctx.clearRect(0, 0, width, height);
-            cleared = true;
-            return;
-          }
-          cleared = false;
-
-          const dark = isDark();
-          // Fade old strokes towards transparent so the page underneath stays visible
-          ctx.globalCompositeOperation = "destination-out";
-          ctx.fillStyle = "rgba(0,0,0,0.07)";
-          ctx.fillRect(0, 0, width, height);
-          ctx.globalCompositeOperation = dark ? "lighter" : "source-over";
-          ctx.lineCap = "round";
-
-          for (let i = particles.length - 1; i >= 0; i--) {
-            const p = particles[i];
-            moveParticle(p);
-            if (isDead(p)) { particles.splice(i, 1); continue; }
-            // A short stroke along the direction of travel turns dots into a ribbon
-            const alpha = Math.sin(Math.PI * (1 - p.life / p.maxLife)) * 0.85 * p.dim;
-            ctx.beginPath();
-            ctx.strokeStyle = "hsla(" + p.hue + ",90%," + (dark ? 60 : 50) + "%," + alpha + ")";
-            ctx.lineWidth = p.radius * 2;
-            ctx.moveTo(p.prevX, p.prevY);
-            ctx.lineTo(p.x, p.y);
-            ctx.stroke();
-          }
-
-          if (pointer.active) { // soft glow marking the finger
-            for (let i = 3; i >= 1; i--) {
-              ctx.beginPath();
-              ctx.fillStyle = "hsla(" + hue + ",90%," + (dark ? 72 : 55) + "%," + 0.1 * i + ")";
-              ctx.arc(pointer.x, pointer.y, 3.5 * i, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-        }
-
-        resize();
-        addEventListener("resize", resize);
-
-        // Touch events keep firing while the page scrolls (pointer events get cancelled)
-        addEventListener("touchstart", (e) => {
-          const t = e.touches[0];
-          pointer.active = false;
-          moveTo(t.clientX, t.clientY);
-          burst(t.clientX, t.clientY);
-        }, { passive: true });
-        addEventListener("touchmove", (e) => { moveTo(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
-        const touchEnd = () => { pointer.active = false; };
-        addEventListener("touchend", touchEnd, { passive: true });
-        addEventListener("touchcancel", touchEnd, { passive: true });
-
-        requestAnimationFrame(step);
-      }
-
       /* ---------- Theme toggle (remembered in localStorage) ---------- */
       function initTheme() {
         try {
@@ -1413,7 +1233,6 @@
       initLoader();
       initBackground();
       initSound();
-      initParticleFlow();
       initTheme();
       initReveal();
     })();
