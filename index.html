@@ -821,22 +821,7 @@
     }
   }
 
-  /* ===== Accessibility & small screens ===== */
-  @media(prefers-reduced-motion:reduce) {
-
-    *,
-    *::before,
-    *::after {
-      animation: none !important;
-      transition: none !important;
-      scroll-behavior: auto !important
-    }
-
-    .tag {
-      opacity: 1
-    }
-  }
-
+  /* ===== Small screens & touch devices ===== */
   @media(max-width:640px) {
     nav a.hide-mobile {
       display: none
@@ -844,6 +829,19 @@
 
     section {
       padding: 72px 0
+    }
+  }
+
+  @media(hover:none) {
+    header {
+      background: color-mix(in srgb, var(--bg) 92%, transparent);
+      backdrop-filter: none
+    }
+
+    .card,
+    .step {
+      background: var(--surface);
+      backdrop-filter: none
     }
   }
     </style>
@@ -976,19 +974,17 @@
       <div class="wrap"><span>Sandu Florin</span><span>Informatică · Chișinău</span></div>
     </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/motion@13.4.6/dist/motion.js"></script>
     <script>
     (function () {
       "use strict";
 
       const root = document.documentElement;
-      const Motion = window.Motion; // optional: page still works if the CDN fails
-      const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
       const byId = (id) => document.getElementById(id);
 
+      const systemDark = matchMedia("(prefers-color-scheme: dark)"); // created once, read every frame
       function isDark() {
         const forced = root.getAttribute("data-theme");
-        return forced ? forced === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+        return forced ? forced === "dark" : systemDark.matches;
       }
 
       /* ---------- Scroll progress bar ---------- */
@@ -1006,8 +1002,6 @@
       function initLoader() {
         const loader = byId("loader");
         const counter = byId("loader-count");
-        if (reduceMotion) { loader.remove(); return; }
-
         const DURATION = 1400;
         const start = performance.now();
         (function tick(now) {
@@ -1095,12 +1089,7 @@
           if (e.pointerType === "mouse") { mouseX = e.clientX; mouseY = e.clientY; }
         });
 
-        if (reduceMotion) {
-          draw(0);
-          addEventListener("scroll", () => draw(0), { passive: true });
-        } else {
-          (function loop(time) { draw(time); requestAnimationFrame(loop); })(0);
-        }
+        (function loop(time) { draw(time); requestAnimationFrame(loop); })(0);
       }
 
       /* ---------- Ambient sound (generated with Web Audio, off by default) ---------- */
@@ -1212,20 +1201,32 @@
         };
       }
 
-      /* ---------- Entrance animations (Motion library) ---------- */
+      /* ---------- Entrance animations (native Web Animations API: no library to load) ---------- */
       function initReveal() {
-        if (!Motion || reduceMotion) return;
-        const EASE_OUT = [0.22, 1, 0.36, 1];
-        const LOADER_WAIT = 1.6; // seconds: let the intro loader finish first
+        if (!("IntersectionObserver" in window) || !Element.prototype.animate) return; // content simply stays visible
+        const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
+        const LOADER_WAIT = 1600; // ms: let the intro loader finish first
+        const riseFrom = (distance) => [
+          { opacity: 0, transform: "translateY(" + distance + "px)" },
+          { opacity: 1, transform: "none" },
+        ];
 
-        Motion.animate("h1 span", { opacity: [0, 1], y: [48, 0] },
-          { delay: Motion.stagger(0.1, { startDelay: LOADER_WAIT }), duration: 0.9, ease: EASE_OUT });
+        document.querySelectorAll("h1 span").forEach((word, i) => {
+          word.animate(riseFrom(48), { duration: 900, delay: LOADER_WAIT + i * 100, easing: EASE_OUT, fill: "backwards" });
+        });
+
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            observer.unobserve(entry.target);
+            entry.target.animate(riseFrom(28), { duration: 700, easing: EASE_OUT });
+            entry.target.style.opacity = 1;
+          });
+        }, { rootMargin: "0px 0px -8% 0px" });
 
         document.querySelectorAll("[data-reveal]").forEach((el) => {
           el.style.opacity = 0;
-          Motion.inView(el, () => {
-            Motion.animate(el, { opacity: [0, 1], y: [28, 0] }, { duration: 0.7, ease: EASE_OUT });
-          }, { amount: 0.15 });
+          observer.observe(el);
         });
       }
 
